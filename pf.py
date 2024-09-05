@@ -1,145 +1,118 @@
 import cv2
 import numpy as np
 import serial
+import time
 import tensorflow as tf
 
-class PersonFollower:
-    def __init__(self, serial_port, baud_rate=9600):
-        self.serial_conn = serial.Serial(serial_port, baud_rate, timeout=1)
-
-    def move_towards(self, target_position, frame):
-        if target_position is None:
-            self.send_command("STOP", 0, 0)
-            return
-
-        x, y = target_position
-        frame_width = frame.shape[1]
-
-        # Define zones
-        zone_width = frame_width // 12
-        left_zone_6 = 0
-        left_zone_5 = left_zone_6 + zone_width
-        left_zone_4 = left_zone_5 + zone_width
-        left_zone_3 = left_zone_4 + zone_width
-        left_zone_2 = left_zone_3 + zone_width
-        left_zone_1 = left_zone_2 + zone_width
-        right_zone_1 = left_zone_1 + zone_width
-        right_zone_2 = right_zone_1 + zone_width
-        right_zone_3 = right_zone_2 + zone_width
-        right_zone_4 = right_zone_3 + zone_width
-        right_zone_5 = right_zone_4 + zone_width
-        right_zone_6 = right_zone_5 + zone_width
-
-        # Determine movement based on zone
-        if x < left_zone_1:
-            if x < left_zone_6:
-                self.send_command("SHARP_LEFT", -1, 1)
-            elif x < left_zone_5:
-                self.send_command("MODERATE_LEFT", -0.7, 1)
-            elif x < left_zone_4:
-                self.send_command("SLIGHT_LEFT", -0.5, 1)
-            elif x < left_zone_3:
-                self.send_command("SLIGHT_LEFT", -0.3, 1)
-            elif x < left_zone_2:
-                self.send_command("SLIGHT_LEFT", -0.2, 1)
-            else:
-                self.send_command("SLIGHT_LEFT", -0.1, 1)
-        elif x > right_zone_1:
-            if x > right_zone_6:
-                self.send_command("SHARP_RIGHT", 1, -1)
-            elif x > right_zone_5:
-                self.send_command("MODERATE_RIGHT", 1, -0.7)
-            elif x > right_zone_4:
-                self.send_command("SLIGHT_RIGHT", 1, -0.5)
-            elif x > right_zone_3:
-                self.send_command("SLIGHT_RIGHT", 1, -0.3)
-            elif x > right_zone_2:
-                self.send_command("SLIGHT_RIGHT", 1, -0.2)
-            else:
-                self.send_command("SLIGHT_RIGHT", 1, -0.1)
-        else:
-            self.send_command("FORWARD", 1, 1)
-
-    def send_command(self, command, left_speed=0, right_speed=0):
-        data = f"{command},{left_speed},{right_speed}\n"
-        self.serial_conn.write(data.encode())
+class Follower:
+    def __init__(self, model_path, serial_port):
+        self.interpreter = tf.lite.Interpreter(model_path=model_path)
+        self.interpreter.allocate_tensors()
+        self.serial_port = serial.Serial(serial_port, 9600, timeout=1)
+        time.sleep(2)  # Give some time for the connection to establish
 
     def draw_bounding_box(self, frame, box, is_target=False):
         x, y, w, h = box
         center_x = x + w // 2
         center_y = y + h // 2
-
-        if is_target:
-            # Draw transparent white bounding box
-            overlay = frame.copy()
-            cv2.rectangle(overlay, (x, y), (x + w, y + h), (255, 255, 255), -1)
-            alpha = 0.7  # Transparency factor
-            cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
-
-            # Draw the center point in red
-            cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
-        else:
-            # Draw standard bounding box in blue
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
         
+        color = (255, 255, 255) if is_target else (0, 255, 0)  # White for the target person
+        transparency = 0.7 if is_target else 0.5  # 70% transparency for the target person
+
+        # Draw bounding box with transparency
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (x, y), (x + w, y + h), color, -1)
+        frame = cv2.addWeighted(overlay, transparency, frame, 1 - transparency, 0)
+        
+        # Draw a center point in red
+        cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
+
         return center_x, center_y
+
+    def move_towards(self, target_position, frame):
+        if target_position is None:
+            self.send_command("STOP", 0)
+            return
+
+        frame_center_x = frame.shape[1] // 2
+        center_x = target_position[0]
+        center_y = target_position[1]
+
+        zone_1 = frame_center_x - (frame.shape[1] // 6)
+        zone_3 = frame_center_x + (frame.shape[1] // 6)
+
+        if center_x < zone_1:
+            if center_x < zone_1 - (frame.shape[1] // 12):
+                self.send_command("LEFT", 1)  # Sharp left turn
+            else:
+                self.send_command("LEFT", 0.5)  # Slight left turn
+        elif center_x > zone_3:
+            if center_x > zone_3 + (frame.shape[1] // 12):
+                self.send_command("RIGHT", 1)  # Sharp right turn
+            else:
+                self.send_command("RIGHT", 0.5)  # Slight right turn
+        else:
+            self.send_command("FORWARD", 1)  # Move forward
+
+    def send_command(self, direction, speed):
+        command = {"direction": direction, "speed": speed}
+        self.serial_port.write(str(command).encode('utf-8'))
+        response = self.serial_port.readline().decode('utf-8').strip()
+        print(f"Sent command: {command}, Received response: {response}")
+
     def process_frame(self, frame, interpreter):
-    input_details = interpreter.get_input_details()
-    output_details = interpreter.get_output_details()
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
 
-    input_shape = input_details[0]['shape']
-    input_data = cv2.resize(frame, (input_shape[2], input_shape[1]))
-    
-    # Check if the model expects UINT8 data type
-    if input_details[0]['dtype'] == np.uint8:
-        input_data = np.uint8(input_data)
-    else:
-        input_data = np.float32(input_data) / 255.0
+        input_shape = input_details[0]['shape']
+        input_data = cv2.resize(frame, (input_shape[2], input_shape[1]))
+        
+        # Check if the model expects UINT8 data type
+        if input_details[0]['dtype'] == np.uint8:
+            input_data = np.uint8(input_data)
+        else:
+            input_data = np.float32(input_data) / 255.0
 
-    input_data = np.expand_dims(input_data, axis=0)
-    interpreter.set_tensor(input_details[0]['index'], input_data)
-    interpreter.invoke()
+        input_data = np.expand_dims(input_data, axis=0)
+        interpreter.set_tensor(input_details[0]['index'], input_data)
+        interpreter.invoke()
 
-    boxes = interpreter.get_tensor(output_details[0]['index'])[0]  # Bounding box coordinates
-    classes = interpreter.get_tensor(output_details[1]['index'])[0]  # Class index
-    scores = interpreter.get_tensor(output_details[2]['index'])[0]  # Confidence scores
+        boxes = interpreter.get_tensor(output_details[0]['index'])[0]  # Bounding box coordinates
+        classes = interpreter.get_tensor(output_details[1]['index'])[0]  # Class index
+        scores = interpreter.get_tensor(output_details[2]['index'])[0]  # Confidence scores
 
-    target_position = None
-    for i in range(len(scores)):
-        if scores[i] > 0.6 and classes[i] == 1:  # Assuming 'person' class is indexed by 1
-            ymin, xmin, ymax, xmax = boxes[i]
-            x = int(xmin * frame.shape[1])
-            y = int(ymin * frame.shape[0])
-            w = int((xmax - xmin) * frame.shape[1])
-            h = int((ymax - ymin) * frame.shape[0])
-            center_x, center_y = self.draw_bounding_box(frame, (x, y, w, h), is_target=True)
-            target_position = (center_x, center_y)
+        target_position = None
+        for i in range(len(scores)):
+            if scores[i] > 0.6 and classes[i] == 1:  # Assuming 'person' class is indexed by 1
+                ymin, xmin, ymax, xmax = boxes[i]
+                x = int(xmin * frame.shape[1])
+                y = int(ymin * frame.shape[0])
+                w = int((xmax - xmin) * frame.shape[1])
+                h = int((ymax - ymin) * frame.shape[0])
+                center_x, center_y = self.draw_bounding_box(frame, (x, y, w, h), is_target=True)
+                target_position = (center_x, center_y)
 
-    self.move_towards(target_position, frame)
-    return frame
-    
+        self.move_towards(target_position, frame)
+        return frame
+
 def main():
-    serial_port = "/dev/ttymxc3"  # Replace with actual serial port
-    baud_rate = 115200  # Set the baud rate according to your setup
+    model_path = "your_model.tflite"
+    serial_port = "/dev/ttyUSB0"  # Adjust based on your setup
+    video_source = 0  # Webcam source
 
-    # Load TFLite model and allocate tensors
-    interpreter = tf.lite.Interpreter(model_path="1.tflite")
-    interpreter.allocate_tensors()
+    follower = Follower(model_path, serial_port)
 
-    # Initialize video capture
-    cap = cv2.VideoCapture(0)
-
-    follower = PersonFollower(serial_port, baud_rate)
-
+    cap = cv2.VideoCapture(video_source)
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame = follower.process_frame(frame_rgb, interpreter)
-        
-        cv2.imshow("Frame", frame)
+        processed_frame = follower.process_frame(frame_rgb, follower.interpreter)
+
+        #cv2.imshow("Frame", processed_frame)
+
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
