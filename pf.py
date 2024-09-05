@@ -83,37 +83,41 @@ class PersonFollower:
             cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
         
         return center_x, center_y
-
     def process_frame(self, frame, interpreter):
-        input_details = interpreter.get_input_details()
-        output_details = interpreter.get_output_details()
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
 
-        input_shape = input_details[0]['shape']
-        input_data = cv2.resize(frame, (input_shape[2], input_shape[1]))
-        input_data = np.expand_dims(input_data, axis=0)
+    input_shape = input_details[0]['shape']
+    input_data = cv2.resize(frame, (input_shape[2], input_shape[1]))
+    
+    # Check if the model expects UINT8 data type
+    if input_details[0]['dtype'] == np.uint8:
+        input_data = np.uint8(input_data)
+    else:
         input_data = np.float32(input_data) / 255.0
 
-        interpreter.set_tensor(input_details[0]['index'], input_data)
-        interpreter.invoke()
+    input_data = np.expand_dims(input_data, axis=0)
+    interpreter.set_tensor(input_details[0]['index'], input_data)
+    interpreter.invoke()
 
-        boxes = interpreter.get_tensor(output_details[0]['index'])[0]  # Bounding box coordinates
-        classes = interpreter.get_tensor(output_details[1]['index'])[0]  # Class index
-        scores = interpreter.get_tensor(output_details[2]['index'])[0]  # Confidence scores
+    boxes = interpreter.get_tensor(output_details[0]['index'])[0]  # Bounding box coordinates
+    classes = interpreter.get_tensor(output_details[1]['index'])[0]  # Class index
+    scores = interpreter.get_tensor(output_details[2]['index'])[0]  # Confidence scores
 
-        target_position = None
-        for i in range(len(scores)):
-            if scores[i] > 0.6 and classes[i] == 1:  # Assuming 'person' class is indexed by 1
-                ymin, xmin, ymax, xmax = boxes[i]
-                x = int(xmin * frame.shape[1])
-                y = int(ymin * frame.shape[0])
-                w = int((xmax - xmin) * frame.shape[1])
-                h = int((ymax - ymin) * frame.shape[0])
-                center_x, center_y = self.draw_bounding_box(frame, (x, y, w, h), is_target=True)
-                target_position = (center_x, center_y)
+    target_position = None
+    for i in range(len(scores)):
+        if scores[i] > 0.6 and classes[i] == 1:  # Assuming 'person' class is indexed by 1
+            ymin, xmin, ymax, xmax = boxes[i]
+            x = int(xmin * frame.shape[1])
+            y = int(ymin * frame.shape[0])
+            w = int((xmax - xmin) * frame.shape[1])
+            h = int((ymax - ymin) * frame.shape[0])
+            center_x, center_y = self.draw_bounding_box(frame, (x, y, w, h), is_target=True)
+            target_position = (center_x, center_y)
 
-        self.move_towards(target_position, frame)
-        return frame
-
+    self.move_towards(target_position, frame)
+    return frame
+    
 def main():
     serial_port = "/dev/ttymxc3"  # Replace with actual serial port
     baud_rate = 115200  # Set the baud rate according to your setup
