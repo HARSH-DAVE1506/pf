@@ -40,37 +40,43 @@ class Follower:
 
     def move_towards(self, target_position, frame):
         if target_position is None:
-            self.send_command(0, 0)  # Stop movement
+            self.send_command(0, 0, 0, 0)  # Stop movement
             return
 
-        frame_center_x = frame.shape[1] // 2
-        frame_center_y = frame.shape[0] // 2
-        center_x, center_y = target_position
+        frame_width = frame.shape[1]
 
-        # Calculate the horizontal and vertical errors
-        error_x = center_x - frame_center_x
-        error_y = center_y - frame_center_y
+        # Divide the frame into horizontal zones
+        horizontal_zone_width = frame_width // 10
 
-        # Define the maximum error (half the frame width and height)
-        max_error_x = frame.shape[1] // 2
-        max_error_y = frame.shape[0] // 2
+        center_x = target_position[0]
 
-        # Calculate the pan and tilt rates
-        pan_rate = max(min(error_x / max_error_x, 1), -1)
-        tilt_rate = max(min(error_y / max_error_y, 1), -1)
+        # Determine which horizontal zone the target is in
+        zone_x = center_x // horizontal_zone_width
 
-        # Scale the rates to the desired degree range
-        pan_degree = pan_rate * 180  # Range: -180 to 180 degrees
-        tilt_degree = tilt_rate * -90  # Range: -90 to 90 degrees
+        # Command parameters
+        x_command = 0  # Pan angle in degrees
+        y_command = 0  # Tilt angle in degrees
+        speed = 0  # Speed of movement
+        acceleration = 0  # Acceleration of movement
 
-        # Send the pan-tilt command
-        self.send_command(pan_degree, tilt_degree)
+        # Adjust pan angle based on the zone
+        if zone_x < 4:
+            x_command = -10  # Move left
+        elif zone_x > 5:
+            x_command = 10  # Move right
+        else:
+            x_command = 0  # Stop movement
 
-    def send_command(self, pan_degree, tilt_degree):
+        # Send the command
+        self.send_command(x_command, y_command, speed, acceleration)
+
+    def send_command(self, x_command, y_command, speed, acceleration):
         command = {
-            "T": 1,  # Type of command (1 for pan-tilt)
-            "PAN": round(pan_degree, 2),  # Pan degree
-            "TILT": round(tilt_degree, 2)  # Tilt degree
+            "T": 133,  # Command type for gimbal control
+            "X": x_command,  # Pan command (-180 to 180 degrees)
+            "Y": y_command,  # Tilt command (-30 to 90 degrees)
+            "SPD": speed,    # Speed of movement
+            "ACC": acceleration  # Acceleration of movement
         }
         command_json = json.dumps(command)
         self.serial_port.write(command_json.encode('utf-8') + b'\n')
@@ -122,7 +128,7 @@ class Follower:
 def main():
     model_path = "1.tflite"
     label_path = "label.txt"  # Path to your label file
-    serial_port = '/dev/ttymxc3'  # Adjust based on your setup
+    serial_port = '/dev/ttymxc2'  # Adjust based on your setup
     baud_rate = 115200  # Explicitly set baud rate
     video_source = 0  # Webcam source
 
