@@ -119,7 +119,7 @@ def main():
     baud_rate = 115200  # Set the baud rate according to your setup
 
     # Load TFLite model and allocate tensors
-    interpreter = tf.lite.Interpreter(model_path="lite_model.tflite")
+    interpreter = tf.lite.Interpreter(model_path="1.tflite")
     interpreter.allocate_tensors()
 
     # Initialize video capture
