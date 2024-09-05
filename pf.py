@@ -3,9 +3,10 @@ import numpy as np
 import serial
 import time
 import tensorflow as tf
+import json
 
 class Follower:
-    def __init__(self, model_path, label_path, serial_port, baud_rate=9600):
+    def __init__(self, model_path, label_path, serial_port, baud_rate=115200):
         self.interpreter = tf.lite.Interpreter(model_path=model_path)
         self.interpreter.allocate_tensors()
         self.labels = self.load_labels(label_path)
@@ -39,34 +40,44 @@ class Follower:
 
     def move_towards(self, target_position, frame):
         if target_position is None:
-            self.send_command("STOP", 0)
+            self.send_command(0, 0)  # Stop both wheels
             return
 
         frame_center_x = frame.shape[1] // 2
         center_x = target_position[0]
-        center_y = target_position[1]
 
-        zone_1 = frame_center_x - (frame.shape[1] // 6)
-        zone_3 = frame_center_x + (frame.shape[1] // 6)
+        # Calculate the error (distance from the center)
+        error = center_x - frame_center_x
 
-        if center_x < zone_1:
-            if center_x < zone_1 - (frame.shape[1] // 12):
-                self.send_command("LEFT", 1)  # Sharp left turn
-            else:
-                self.send_command("LEFT", 0.5)  # Slight left turn
-        elif center_x > zone_3:
-            if center_x > zone_3 + (frame.shape[1] // 12):
-                self.send_command("RIGHT", 1)  # Sharp right turn
-            else:
-                self.send_command("RIGHT", 0.5)  # Slight right turn
-        else:
-            self.send_command("FORWARD", 1)  # Move forward
+        # Define the maximum error (half the frame width)
+        max_error = frame.shape[1] // 2
 
-    def send_command(self, direction, speed):
-        command = {"direction": direction, "speed": speed}
-        self.serial_port.write(str(command).encode('utf-8'))
+        # Calculate the turn rate (-0.5 to 0.5)
+        turn_rate = max(min(error / max_error, 0.5), -0.5)
+
+        # Base speed (adjust as needed)
+        base_speed = 0.3
+
+        # Calculate left and right wheel speeds
+        left_speed = base_speed - turn_rate
+        right_speed = base_speed + turn_rate
+
+        # Clamp speeds to the allowed range (-0.5 to 0.5)
+        left_speed = max(min(left_speed, 0.5), -0.5)
+        right_speed = max(min(right_speed, 0.5), -0.5)
+
+        self.send_command(left_speed, right_speed)
+
+    def send_command(self, left_speed, right_speed):
+        command = {
+            "T": 1,
+            "L": round(left_speed, 2),
+            "R": round(right_speed, 2)
+        }
+        command_json = json.dumps(command)
+        self.serial_port.write(command_json.encode('utf-8') + b'\n')
         response = self.serial_port.readline().decode('utf-8').strip()
-        print(f"Sent command: {command}, Received response: {response}")
+        print(f"Sent command: {command_json}, Received response: {response}")
 
     def process_frame(self, frame, interpreter):
         input_details = interpreter.get_input_details()
@@ -107,8 +118,7 @@ class Follower:
                 if class_id == 0:  # Assuming 'person' class is indexed by 0
                     target_position = (center_x, center_y)
 
-        # Comment out the movement logic
-        # self.move_towards(target_position, frame)
+        self.move_towards(target_position, frame)
         return frame
 
 def main():
