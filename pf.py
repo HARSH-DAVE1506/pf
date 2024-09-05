@@ -5,13 +5,18 @@ import time
 import tensorflow as tf
 
 class Follower:
-    def __init__(self, model_path, serial_port):
+    def __init__(self, model_path, label_path, serial_port, baud_rate=9600):
         self.interpreter = tf.lite.Interpreter(model_path=model_path)
         self.interpreter.allocate_tensors()
-        self.serial_port = serial.Serial(serial_port, 9600, timeout=1)
+        self.labels = self.load_labels(label_path)
+        self.serial_port = serial.Serial(serial_port, baud_rate, timeout=1)
         time.sleep(2)  # Give some time for the connection to establish
 
-    def draw_bounding_box(self, frame, box, is_target=False):
+    def load_labels(self, path):
+        with open(path, 'r') as f:
+            return {i: line.strip() for i, line in enumerate(f.readlines())}
+
+    def draw_bounding_box(self, frame, box, label, is_target=False):
         x, y, w, h = box
         center_x = x + w // 2
         center_y = y + h // 2
@@ -26,6 +31,9 @@ class Follower:
         
         # Draw a center point in red
         cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
+
+        # Add label to the bounding box
+        cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
 
         return center_x, center_y
 
@@ -83,24 +91,34 @@ class Follower:
 
         target_position = None
         for i in range(len(scores)):
-            if scores[i] > 0.6 and classes[i] == 1:  # Assuming 'person' class is indexed by 1
+            if scores[i] > 0.6:
                 ymin, xmin, ymax, xmax = boxes[i]
                 x = int(xmin * frame.shape[1])
                 y = int(ymin * frame.shape[0])
                 w = int((xmax - xmin) * frame.shape[1])
                 h = int((ymax - ymin) * frame.shape[0])
-                center_x, center_y = self.draw_bounding_box(frame, (x, y, w, h), is_target=True)
-                target_position = (center_x, center_y)
+                
+                class_id = int(classes[i])
+                label = f"{self.labels[class_id]}: {scores[i]:.2f}"
+                print(f"Detected: {label}")
+                
+                center_x, center_y = self.draw_bounding_box(frame, (x, y, w, h), label, is_target=(class_id == 0))
+                
+                if class_id == 0:  # Assuming 'person' class is indexed by 0
+                    target_position = (center_x, center_y)
 
-        self.move_towards(target_position, frame)
+        # Comment out the movement logic
+        # self.move_towards(target_position, frame)
         return frame
 
 def main():
-    model_path = "your_model.tflite"
-    serial_port = "/dev/ttyUSB0"  # Adjust based on your setup
+    model_path = "1.tflite"
+    label_path = "label.txt"  # Path to your label file
+    serial_port = '/dev/ttymxc2'  # Adjust based on your setup
+    baud_rate = 115200  # Explicitly set baud rate
     video_source = 0  # Webcam source
 
-    follower = Follower(model_path, serial_port)
+    follower = Follower(model_path, label_path, serial_port, baud_rate)
 
     cap = cv2.VideoCapture(video_source)
     while cap.isOpened():
